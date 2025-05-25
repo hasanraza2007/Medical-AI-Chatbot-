@@ -1,4 +1,8 @@
 streamlit
-requests
+opencv-python
+easyocr
+pdf2image
+reportlab
+pandas
 openai
-pillow
+Pillow
