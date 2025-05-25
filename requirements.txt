@@ -1,8 +1,0 @@
-streamlit
-opencv-python
-easyocr
-pdf2image
-reportlab
-pandas
-openai
-Pillow
