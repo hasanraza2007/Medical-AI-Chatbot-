@@ -1,35 +1,31 @@
-
-import cv2
-import numpy as np
-from PIL import Image
-from pdf2image import convert_from_path
-import re
-import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-import openai
 import streamlit as st
-import os
+import requests
 import tempfile
+import io
+from PIL import Image
+import re
+import openai
 
-# ✅ Set your OpenAI API Key
-openai.api_key = "your-openai-api-key"  # Replace with your real key
+# 🔐 Set your OpenAI and OCR.space API Keys
+openai.api_key = "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"          # Replace with your OpenAI API key
+ocr_space_api_key = "K87494185088957"    # Replace with your OCR.space key (get from https://ocr.space/OCRAPI)
 
-def load_report(file_path):
-    if file_path.lower().endswith(".pdf"):
-        images = convert_from_path(file_path, dpi=300)
-    else:
-        images = [Image.open(file_path)]
-    return images
+# OCR.space API Function
+def ocr_space_api(image_bytes):
+    url = 'https://api.ocr.space/parse/image'
+    payload = {
+        'isOverlayRequired': False,
+        'apikey': ocr_space_api_key,
+        'language': 'eng'
+    }
+    files = {
+        'filename': image_bytes
+    }
+    response = requests.post(url, files=files, data=payload)
+    result = response.json()
+    return result['ParsedResults'][0]['ParsedText'] if result.get('ParsedResults') else ""
 
-def preprocess_image(pil_img):
-    img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2GRAY)
-    img = cv2.bilateralFilter(img, 11, 17, 17)
-    _, img = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return img
-
-def extract_text_from_image(cv2_img):
-    return pytesseract.image_to_string(cv2_img)
-
+# Extract structure from OCR text
 def structure_medical_data(text):
     results = []
     lines = text.split('\n')
@@ -67,6 +63,7 @@ def structure_medical_data(text):
             })
     return results
 
+# Use OpenAI to explain abnormal results
 def explain_results(structured_data):
     explanations = {}
     for row in structured_data:
@@ -90,6 +87,7 @@ def explain_results(structured_data):
         row["Explanation"] = explanation
     return explanations
 
+# Follow-up suggestions based on results
 def generate_follow_up_suggestions(structured_data):
     suggestions = []
     for row in structured_data:
@@ -101,35 +99,37 @@ def generate_follow_up_suggestions(structured_data):
             suggestions.append(f"{test}: Monitor this value and consider retesting soon.")
     return suggestions
 
-# Streamlit App
+# Streamlit UI
+st.set_page_config(page_title="🧠 AI Medical Report Assistant", layout="centered")
 st.title("🧠 AI Medical Report Assistant")
-st.write("Upload a scanned medical report (PDF or image), and let the AI explain it.")
+st.write("Upload a scanned medical report (image only), and let the AI extract, analyze, and explain it.")
 
-uploaded_file = st.file_uploader("Upload PDF or Image", type=["pdf", "png", "jpg", "jpeg"])
+uploaded_file = st.file_uploader("📎 Upload Report (PNG, JPG, JPEG)", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        tmp_path = tmp_file.name
-
     st.success("✅ File uploaded successfully!")
 
-    try:
-        images = load_report(tmp_path)
-        st.image(images[0], caption="First Page of Report", use_column_width=True)
+    # Convert to bytes for API
+    image = Image.open(uploaded_file).convert("RGB")
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    image_bytes = buffered.getvalue()
 
-        processed_img = preprocess_image(images[0])
-        text = extract_text_from_image(processed_img)
+    st.image(image, caption="Uploaded Report", use_column_width=True)
 
-        st.subheader("📄 Extracted Text")
-        st.text(text)
+    with st.spinner("🔍 Extracting text..."):
+        extracted_text = ocr_space_api(image_bytes)
 
-        structured = structure_medical_data(text)
-        st.subheader("📊 Structured Results")
+    st.subheader("📄 Extracted Text")
+    st.text_area("OCR Result", extracted_text, height=300)
+
+    structured = structure_medical_data(extracted_text)
+    if structured:
+        st.subheader("📊 Structured Test Results")
         st.dataframe(structured)
 
-        explanations = explain_results(structured)
         st.subheader("💬 AI Explanations")
+        explain_results(structured)
         for row in structured:
             if "Explanation" in row:
                 with st.expander(f"{row['Test']} ({row['Status']})"):
@@ -139,6 +139,5 @@ if uploaded_file is not None:
         suggestions = generate_follow_up_suggestions(structured)
         for s in suggestions:
             st.write(f"- {s}")
-
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
+    else:
+        st.warning("⚠️ No structured lab test data could be detected.")
